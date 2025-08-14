@@ -184,7 +184,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_reply_markup(reply_markup=get_store_keyboard(page=page))
 
 # Async main
-async def main_async():
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     # Add handlers
@@ -225,7 +225,7 @@ async def main_async():
         app.add_handler(handler)
 
     print("Starting Telegram bot...")
-    app.run_polling()
+    app.run_polling(close_loop=False)
 
 if __name__ == "__main__":
-    asyncio.run(main_async())
+    main()
