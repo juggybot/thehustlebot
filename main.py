@@ -225,7 +225,7 @@ async def main_async():
         app.add_handler(handler)
 
     print("Starting Telegram bot...")
-    await app.run_polling()
+    app.run_polling()
 
 if __name__ == "__main__":
     asyncio.run(main_async())
