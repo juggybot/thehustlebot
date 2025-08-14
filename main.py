@@ -1,5 +1,15 @@
+# main.py
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters
+)
 from importlib import import_module
 from functools import wraps
 import stripe
@@ -13,22 +23,42 @@ RESPONSES = {
     "error_occurred": "An error occurred. Admins have been notified",
 }
 
-ALLOWED_USER_IDS = {
-    6205556853,
-}
-
-# Map Stripe session IDs to Telegram user IDs
+ALLOWED_USER_IDS = {6205556853}
 PAYMENT_SESSIONS = {}
 
 STORE_LIST = [
-    "AMAZON", "APPLE", "ARCTERYX", "BALENCIAGA", "BEST BUY", "CANADA GOOSE", "CARTIER",
-    "CHANEL", "DENIM TEARS", "DIOR", "DYSON", "EBAY", "FARFETCH", "FOOTLOCKER",
-    "GLUE", "GOAT", "GRAILED", "GUCCI", "JD SPORTS", "LEGIT APP", "LEGO", "LOUIS VUITTON",
-    "MONCLER", "MYER", "NIKE", "NORDSTROM", "NORTH FACE", "PANDORA", "PRADA", "RALPH LAUREN",
-    "SAKS FIFTH AVENUE", "SAMSUNG", "SEPHORA", "SP5DER", "STANLEY", "STOCKX", "TARGET", "TRAPSTAR", "UGG",
-    "VINTED", "ZALANDO"
+    "AMAZON", "APPLE", "ARCTERYX", "BALENCIAGA", "BEST BUY", "CANADA GOOSE",
+    "CARTIER", "CHANEL", "DENIM TEARS", "DIOR", "DYSON", "EBAY", "FARFETCH",
+    "FOOTLOCKER", "GLUE", "GOAT", "GRAILED", "GUCCI", "JD SPORTS", "LEGIT APP",
+    "LEGO", "LOUIS VUITTON", "MONCLER", "MYER", "NIKE", "NORDSTROM", "NORTH FACE",
+    "PANDORA", "PRADA", "RALPH LAUREN", "SAKS FIFTH AVENUE", "SAMSUNG", "SEPHORA",
+    "SP5DER", "STANLEY", "STOCKX", "TARGET", "TRAPSTAR", "UGG", "VINTED", "ZALANDO"
 ]
 
+TRANSLATIONS = {
+    "language_set": {
+        "en": "Language set to English.\nYou can now use /help or /generate.",
+        "pt": "Idioma definido para Português.\nAgora você pode usar /help ou /generate."
+    },
+    "welcome": {
+        "en": "Welcome to The Hustle Bot! Would you like to continue in English or Portuguese?",
+        "pt": "Bem-vindo ao The Hustle Bot! Você gostaria de continuar em Inglês ou Português?"
+    },
+    "help_menu": {
+        "en": "*HELP MENU*\n/access - Use this command to check if you have access!\n/generate - Use this command to start generating your receipt!\nProvided by The Hustle Bot",
+        "pt": "*MENU DE AJUDA*\n/access - Use este comando para verificar se você tem acesso!\n/generate - Use este comando para começar a gerar seu recibo!\nFornecido por The Hustle Bot"
+    },
+    "access_granted": {
+        "en": "YOU HAVE ACCESS\nUse /generate to get started!\nProvided by The Hustle Bot",
+        "pt": "VOCÊ TEM ACESSO\nUse /generate para começar!\nFornecido por The Hustle Bot"
+    },
+    "select_store": {
+        "en": "Please select a store to generate your receipt!",
+        "pt": "Por favor, selecione uma loja para gerar seu recibo!"
+    },
+}
+
+# Helper functions
 def has_access(user_id):
     return user_id in ALLOWED_USER_IDS
 
@@ -61,56 +91,24 @@ def get_store_keyboard(page=0, items_per_page=10):
         keyboard.append(nav_buttons)
     return InlineKeyboardMarkup(keyboard)
 
+# Command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(update.effective_user.id)
     keyboard = [
         [
             InlineKeyboardButton("English", callback_data="lang_en"),
             InlineKeyboardButton("Português", callback_data="lang_pt")
         ]
     ]
-    # Default to English if not set
     lang = context.user_data.get("language", "en")
     await update.message.reply_text(
         TRANSLATIONS["welcome"][lang],
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-TRANSLATIONS = {
-    "language_set": {
-        "en": "Language set to English.\nYou can now use /help or /generate.",
-        "pt": "Idioma definido para Português.\nAgora você pode usar /help ou /generate."
-    },
-    "welcome": {
-        "en": "Welcome to The Hustle Bot! Would you like to continue in English or Portuguese?",
-        "pt": "Bem-vindo ao The Hustle Bot! Você gostaria de continuar em Inglês ou Português?"
-    },
-    "help_menu": {
-        "en": "*HELP MENU*\n/access - Use this command to check if you have access!\n/generate - Use this command to start generating your ceipt!\nProvided by The Hustle Bot",
-        "pt": "*MENU DE AJUDA*\n/access - Use este comando para verificar se você tem acesso!\n/generate - Use este comando para começar a gerar seu recibo!\nFornecido por The Hustle Bot"
-    },
-    "access_granted": {
-        "en": "YOU HAVE ACCESS\nUse /generate to get started!\nProvided by The Hustle Bot",
-        "pt": "VOCÊ TEM ACESSO\nUse /generate para começar!\nFornecido por The Hustle Bot"
-    },
-    "select_store": {
-        "en": "Please select a store to generate your ceipt!",
-        "pt": "Por favor, selecione uma loja para gerar seu recibo!"
-    },
-}
-
-async def language_selection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    lang = query.data.split("_")[1]
-    context.user_data["language"] = lang
-    await query.edit_message_text(TRANSLATIONS["language_set"][lang])
-
 @requires_start
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = context.user_data.get("language", "en")
-    text = TRANSLATIONS["help_menu"][lang]
-    await update.message.reply_text(text, parse_mode='Markdown')
+    await update.message.reply_text(TRANSLATIONS["help_menu"][lang], parse_mode='Markdown')
 
 @requires_start
 async def access_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -119,7 +117,6 @@ async def access_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if has_access(user_id):
         await update.message.reply_text(TRANSLATIONS["access_granted"][lang])
     else:
-        # Only translate if you want, otherwise keep as is
         await update.message.reply_text(RESPONSES["no_access"] if lang == "en" else "Por favor, compre para ter acesso!")
 
 @requires_start
@@ -133,82 +130,73 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         TRANSLATIONS["select_store"][lang],
         reply_markup=get_store_keyboard(page=0)
     )
-    
+
 @requires_start
 async def payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
-    # Create Stripe Checkout Session
     try:
         session = stripe.checkout.Session.create(
             payment_method_types=['card'],
             line_items=[{
                 'price_data': {
                     'currency': 'usd',
-                    'product_data': {
-                        'name': 'Access Pass',
-                    },
-                    'unit_amount': 500,  # $5.00
+                    'product_data': {'name': 'Access Pass'},
+                    'unit_amount': 500,
                 },
                 'quantity': 1,
             }],
             mode='payment',
             success_url='https://yourdomain.com/payment-success?session_id={CHECKOUT_SESSION_ID}',
             cancel_url='https://yourdomain.com/payment-cancel',
-            metadata={'telegram_user_id': str(user_id)},  # pass user id in metadata
+            metadata={'telegram_user_id': str(user_id)},
         )
-        
-        # Save mapping of session id to user_id
         PAYMENT_SESSIONS[session.id] = user_id
-        
-        # Send payment link to user
-        await update.message.reply_text(
-            f'Please complete your payment by clicking <a href="{session.url}">this link</a>.',
-            parse_mode='HTML'
-        )
+        await update.message.reply_text(f'Please complete your payment by clicking <a href="{session.url}">this link</a>.', parse_mode='HTML')
     except Exception as e:
         await update.message.reply_text(f"Error creating payment session: {str(e)}")
+
+# Callback handlers
+async def language_selection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = query.data.split("_")[1]
+    context.user_data["language"] = lang
+    await query.edit_message_text(TRANSLATIONS["language_set"][lang])
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     if "language" not in context.user_data:
         await query.message.reply_text("Please use /start first to begin.")
         return
-    
+
     data = query.data
     if data.startswith('store_'):
         store_key = data[6:]
         store_name = store_key.replace('_', ' ').upper()
         try:
             module = import_module(f"email_generators.{store_key}")
-            print(f"Module {store_key} imported successfully.")
         except ModuleNotFoundError:
             await query.edit_message_text("Sorry, this store is not supported yet.")
             return
-        # Store language in context for generator use
-        # ConversationHandler will handle the entry point and pass context
     elif data.startswith('page_'):
         page = int(data[5:])
         await query.edit_message_reply_markup(reply_markup=get_store_keyboard(page=page))
 
-def main():
+# Async main
+async def main_async():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Basic commands
+    # Add handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("access", access_command))
     app.add_handler(CommandHandler("generate", generate_command))
     app.add_handler(CommandHandler("payment", payment_command))
-
-    # Language callbacks
     app.add_handler(CallbackQueryHandler(language_selection_handler, pattern=r'^lang_'))
-    # Pagination and store selection
-    app.add_handler(CallbackQueryHandler(button_handler, pattern=r'^page_'))
+    app.add_handler(CallbackQueryHandler(button_handler, pattern=r'^(page_|store_)'))
 
-    # Add store ConversationHandlers dynamically
+    # Add ConversationHandlers dynamically for each store
     for store in STORE_LIST:
         store_key = store.lower().replace(" ", "_")
         try:
@@ -236,9 +224,8 @@ def main():
         )
         app.add_handler(handler)
 
-    # Start bot
     print("Starting Telegram bot...")
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main_async())
