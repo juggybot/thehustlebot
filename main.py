@@ -195,24 +195,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
+
+    # Basic commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("access", access_command))
     app.add_handler(CommandHandler("generate", generate_command))
     app.add_handler(CommandHandler("payment", payment_command))
-    # Add handler for language selection callbacks
+
+    # Language callbacks
     app.add_handler(CallbackQueryHandler(language_selection_handler, pattern=r'^lang_'))
-    # Only handle pagination callbacks in button_handler
+    # Pagination and store selection
     app.add_handler(CallbackQueryHandler(button_handler, pattern=r'^page_'))
 
-    # Add ConversationHandlers for all stores at startup
+    # Add store ConversationHandlers dynamically
     for store in STORE_LIST:
         store_key = store.lower().replace(" ", "_")
         try:
             module = import_module(f"email_generators.{store_key}")
         except ModuleNotFoundError:
             continue
-        # Wrap generator handlers to inject language
+
         async def start_receipt_with_lang(update, context, _module=module):
             lang = context.user_data.get("language", "en")
             await _module.start_receipt(update, context, lang=lang)
@@ -233,6 +236,8 @@ def main():
         )
         app.add_handler(handler)
 
+    # Start bot
+    print("Starting Telegram bot...")
     app.run_polling()
 
 if __name__ == "__main__":
