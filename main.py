@@ -29,14 +29,20 @@ RESPONSES = {
 ALLOWED_USERS_FILE = "allowed_users.json"
 
 def load_allowed_users():
-    if os.path.exists(ALLOWED_USERS_FILE):
-        with open(ALLOWED_USERS_FILE, "r") as f:
-            return set(json.load(f))
-    return set()
-
-def save_allowed_users(users):
+    if not os.path.exists(ALLOWED_USERS_FILE):
+        return set()  # no file yet → return empty set
+    with open(ALLOWED_USERS_FILE, "r") as f:
+        try:
+            data = f.read().strip()
+            if not data:  # file exists but is empty
+                return set()
+            return set(json.loads(data))
+        except json.JSONDecodeError:
+            return set()  # corrupted or invalid → reset
+        
+def save_allowed_users(allowed_users):
     with open(ALLOWED_USERS_FILE, "w") as f:
-        json.dump(list(users), f)
+        json.dump(list(allowed_users), f)
 
 # Load on startup
 ALLOWED_USER_IDS = load_allowed_users()
