@@ -14,6 +14,11 @@ def terminate_processes(processes):
 processes = []
 
 try:
+    # Start webhook_server.py
+    webhook_process = subprocess.Popen([sys.executable, "webhook_server.py"])
+    processes.append(webhook_process)
+    print("Started webhook_server.py")
+
     # Start main.py
     main_process = subprocess.Popen([sys.executable, "main.py"])
     processes.append(main_process)
