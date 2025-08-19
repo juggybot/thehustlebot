@@ -134,7 +134,159 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         page = int(data[5:])
         await query.edit_message_reply_markup(reply_markup=get_store_keyboard(page=page))
 
-# ------------------ Flask Routes ------------------
+import os
+import json
+import stripe
+from flask import Flask, request, jsonify
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes
+)
+from functools import wraps
+
+# ---------------- Config ----------------
+TOKEN = os.environ.get("TOKEN")
+STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+ALLOWED_USERS_FILE = "allowed_users.json"
+
+stripe.api_key = STRIPE_API_KEY
+app = Flask(__name__)
+
+# ---------------- Data ----------------
+STORE_LIST = ["AMAZON", "APPLE", "NIKE", "ADIDAS"]
+ALLOWED_USER_IDS = set()
+PAYMENT_SESSIONS = {}
+
+def load_allowed_users():
+    global ALLOWED_USER_IDS
+    if not os.path.exists(ALLOWED_USERS_FILE):
+        ALLOWED_USER_IDS = set()
+        return ALLOWED_USER_IDS
+    with open(ALLOWED_USERS_FILE, "r") as f:
+        content = f.read().strip()
+        if not content:
+            ALLOWED_USER_IDS = set()
+        else:
+            try:
+                ALLOWED_USER_IDS = set(json.loads(content))
+            except:
+                ALLOWED_USER_IDS = set()
+    return ALLOWED_USER_IDS
+
+def save_allowed_users(users):
+    with open(ALLOWED_USERS_FILE, "w") as f:
+        json.dump(list(users), f)
+
+# ---------------- Helpers ----------------
+def has_access(user_id):
+    load_allowed_users()
+    return user_id in ALLOWED_USER_IDS
+
+def requires_start(func):
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        if "language" not in context.user_data:
+            if update.message:
+                await update.message.reply_text("Please use /start first.")
+            elif update.callback_query:
+                await update.callback_query.answer()
+                await update.callback_query.message.reply_text("Please use /start first.")
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapper
+
+def get_store_keyboard(page=0, items_per_page=10):
+    start = page * items_per_page
+    end = min(start + items_per_page, len(STORE_LIST))
+    keyboard = [
+        [InlineKeyboardButton(store, callback_data=f'store_{store.lower()}')] 
+        for store in STORE_LIST[start:end]
+    ]
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("Previous", callback_data=f'page_{page-1}'))
+    if end < len(STORE_LIST):
+        nav_buttons.append(InlineKeyboardButton("Next", callback_data=f'page_{page+1}'))
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+    return InlineKeyboardMarkup(keyboard)
+
+# ---------------- Commands ----------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("English", callback_data="lang_en"),
+         InlineKeyboardButton("Português", callback_data="lang_pt")]
+    ]
+    await update.message.reply_text("Welcome! Choose your language:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+@requires_start
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("/start - Start\n/help - Help\n/access - Check access\n/generate - Generate receipt\n/payment - Buy access")
+
+@requires_start
+async def access_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if has_access(user_id):
+        await update.message.reply_text("✅ You have access!")
+    else:
+        await update.message.reply_text("❌ You do not have access. Use /payment to buy access.")
+
+@requires_start
+async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not has_access(user_id):
+        await update.message.reply_text("❌ You do not have access. Use /payment to buy access.")
+        return
+    await update.message.reply_text("Select a store:", reply_markup=get_store_keyboard())
+
+@requires_start
+async def payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            line_items=[{
+                'price_data': {
+                    'currency': 'usd',
+                    'product_data': {'name': 'Access Pass'},
+                    'unit_amount': 500,
+                },
+                'quantity': 1,
+            }],
+            mode='payment',
+            success_url='https://yourdomain.com/success?session_id={CHECKOUT_SESSION_ID}',
+            cancel_url='https://yourdomain.com/cancel',
+            metadata={'telegram_user_id': str(user_id)}
+        )
+        PAYMENT_SESSIONS[session.id] = user_id
+        await update.message.reply_text(f'Complete payment: <a href="{session.url}">Click Here</a>', parse_mode='HTML')
+    except Exception as e:
+        await update.message.reply_text(f"Error: {e}")
+
+# ---------------- Callbacks ----------------
+async def language_selection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = query.data.split("_")[1]
+    context.user_data["language"] = lang
+    await query.edit_message_text(f"Language set to {lang.upper()}!")
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data.startswith("page_"):
+        page = int(data.split("_")[1])
+        await query.edit_message_reply_markup(reply_markup=get_store_keyboard(page=page))
+    elif data.startswith("store_"):
+        store = data.split("_")[1].upper()
+        await query.edit_message_text(f"You selected {store}!")
+
+# ---------------- Telegram Setup ----------------
 application = ApplicationBuilder().token(TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("help", help_command))
@@ -150,6 +302,7 @@ def home():
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
+    from telegram import Update
     data = request.get_json(force=True)
     update = Update.de_json(data, bot=application.bot)
     application.create_task(application.process_update(update))
@@ -174,6 +327,9 @@ def stripe_webhook():
             print(f"✅ Access granted for user {user_id}")
     return jsonify(success=True)
 
+# ---------------- Run ----------------
 if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 5000))
+    application.initialize()
+    application.start()
     app.run(host="0.0.0.0", port=PORT)
