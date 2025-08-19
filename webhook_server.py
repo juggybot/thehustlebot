@@ -23,6 +23,10 @@ def save_allowed_users(users):
     with open(ALLOWED_USERS_FILE, "w") as f:
         json.dump(list(users), f)
 
+@app.route("/", methods=["GET"])
+def home():
+    return "✅ The HustleBot Webhook Server is Running"
+
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
     payload = request.data
