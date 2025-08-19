@@ -152,7 +152,7 @@ def home():
 def telegram_webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, bot=application.bot)
-    application.update_queue.put_nowait(update)
+    application.create_task(application.process_update(update))
     return jsonify({"ok": True})
 
 @app.route("/stripe-webhook", methods=["POST"])
