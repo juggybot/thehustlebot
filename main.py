@@ -255,12 +255,13 @@ def main():
     PORT = int(os.environ.get("PORT", 8443))
     RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")  # Automatically provided by Render
 
+    # NEW
+    print("Starting Telegram bot via webhook...")
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        webhook_url=f"{RENDER_URL}/{TOKEN}",  # Telegram needs a unique URL path
-        drop_pending_updates=True,  # Optional: clears old messages on startup
-        on_startup=on_startup
+        webhook_url=f"{RENDER_URL}/{TOKEN}",  # Telegram webhook path
+        drop_pending_updates=True
     )
 
 if __name__ == "__main__":
