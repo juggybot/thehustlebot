@@ -1,5 +1,7 @@
 # main.py
 import asyncio
+import json
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -23,7 +25,21 @@ RESPONSES = {
     "error_occurred": "An error occurred. Admins have been notified",
 }
 
-ALLOWED_USER_IDS = {6205556853}
+# 🔹 Shared JSON file
+ALLOWED_USERS_FILE = "allowed_users.json"
+
+def load_allowed_users():
+    if os.path.exists(ALLOWED_USERS_FILE):
+        with open(ALLOWED_USERS_FILE, "r") as f:
+            return set(json.load(f))
+    return set()
+
+def save_allowed_users(users):
+    with open(ALLOWED_USERS_FILE, "w") as f:
+        json.dump(list(users), f)
+
+# Load on startup
+ALLOWED_USER_IDS = load_allowed_users()
 PAYMENT_SESSIONS = {}
 
 STORE_LIST = [
@@ -60,6 +76,9 @@ TRANSLATIONS = {
 
 # Helper functions
 def has_access(user_id):
+    # 🔹 Always re-load so new buyers get access instantly
+    global ALLOWED_USER_IDS
+    ALLOWED_USER_IDS = load_allowed_users()
     return user_id in ALLOWED_USER_IDS
 
 def requires_start(func):
@@ -151,7 +170,10 @@ async def payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             metadata={'telegram_user_id': str(user_id)},
         )
         PAYMENT_SESSIONS[session.id] = user_id
-        await update.message.reply_text(f'Please complete your payment by clicking <a href="{session.url}">this link</a>.', parse_mode='HTML')
+        await update.message.reply_text(
+            f'Please complete your payment by clicking <a href="{session.url}">this link</a>.',
+            parse_mode='HTML'
+        )
     except Exception as e:
         await update.message.reply_text(f"Error creating payment session: {str(e)}")
 

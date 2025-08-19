@@ -1,11 +1,27 @@
 # webhook_server.py
 from flask import Flask, request, jsonify
 import stripe
+import json
+import os
 from config import STRIPE_API_KEY, STRIPE_WEBHOOK_SECRET
-from main import ALLOWED_USER_IDS  # import from your bot file or use a DB
 
 app = Flask(__name__)
 stripe.api_key = STRIPE_API_KEY
+
+# Path to shared JSON file
+ALLOWED_USERS_FILE = "allowed_users.json"
+
+def load_allowed_users():
+    """Load allowed users from JSON file"""
+    if os.path.exists(ALLOWED_USERS_FILE):
+        with open(ALLOWED_USERS_FILE, "r") as f:
+            return set(json.load(f))
+    return set()
+
+def save_allowed_users(users):
+    """Save allowed users to JSON file"""
+    with open(ALLOWED_USERS_FILE, "w") as f:
+        json.dump(list(users), f)
 
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
@@ -25,9 +41,17 @@ def stripe_webhook():
         if telegram_user_id:
             try:
                 user_id = int(telegram_user_id)
-                ALLOWED_USER_IDS.add(user_id)
+
+                # Load -> Update -> Save
+                allowed_users = load_allowed_users()
+                allowed_users.add(user_id)
+                save_allowed_users(allowed_users)
+
                 print(f"✅ Access granted for user: {user_id}")
             except ValueError:
                 print("❌ Invalid user ID format.")
 
     return jsonify(success=True)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
