@@ -1,4 +1,3 @@
-# main.py
 import asyncio
 import json
 import os
@@ -25,26 +24,24 @@ RESPONSES = {
     "error_occurred": "An error occurred. Admins have been notified",
 }
 
-# 🔹 Shared JSON file
 ALLOWED_USERS_FILE = "allowed_users.json"
 
 def load_allowed_users():
     if not os.path.exists(ALLOWED_USERS_FILE):
-        return set()  # no file yet → return empty set
+        return set()
     with open(ALLOWED_USERS_FILE, "r") as f:
+        content = f.read().strip()
+        if not content:
+            return set()
         try:
-            data = f.read().strip()
-            if not data:  # file exists but is empty
-                return set()
-            return set(json.loads(data))
+            return set(json.loads(content))
         except json.JSONDecodeError:
-            return set()  # corrupted or invalid → reset
-        
+            return set()
+
 def save_allowed_users(allowed_users):
     with open(ALLOWED_USERS_FILE, "w") as f:
         json.dump(list(allowed_users), f)
 
-# Load on startup
 ALLOWED_USER_IDS = load_allowed_users()
 PAYMENT_SESSIONS = {}
 
@@ -211,11 +208,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         page = int(data[5:])
         await query.edit_message_reply_markup(reply_markup=get_store_keyboard(page=page))
 
-# Async main
+async def on_startup(app):
+    print("Bot started via webhook...")
+
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Add handlers
+    # Add your handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("access", access_command))
@@ -224,7 +223,7 @@ def main():
     app.add_handler(CallbackQueryHandler(language_selection_handler, pattern=r'^lang_'))
     app.add_handler(CallbackQueryHandler(button_handler, pattern=r'^(page_|store_)'))
 
-    # Add ConversationHandlers dynamically for each store
+    # Add ConversationHandlers for stores
     for store in STORE_LIST:
         store_key = store.lower().replace(" ", "_")
         try:
@@ -252,8 +251,17 @@ def main():
         )
         app.add_handler(handler)
 
-    print("Starting Telegram bot...")
-    app.run_polling(close_loop=False)
+    # Webhook setup for Render
+    PORT = int(os.environ.get("PORT", 8443))
+    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")  # Automatically provided by Render
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=f"{RENDER_URL}/{TOKEN}",  # Telegram needs a unique URL path
+        drop_pending_updates=True,  # Optional: clears old messages on startup
+        on_startup=on_startup
+    )
 
 if __name__ == "__main__":
     main()
