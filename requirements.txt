@@ -1,5 +1,7 @@
 flask==3.0.3
 python-telegram-bot>=20.3
+python-telegram-bot[webhooks]
 stripe==8.9.0
 gunicorn==23.0.0  # For running Flask on Render instead of flask's built-in server
+
 
