@@ -1,47 +1,36 @@
-import asyncio
-import json
+# bot_server.py
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    ConversationHandler,
-    MessageHandler,
-    filters
-)
+import json
+import stripe
+from flask import Flask, request, jsonify
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler
 from importlib import import_module
 from functools import wraps
-import stripe
-from config import TOKEN, STRIPE_API_KEY
+from config import TOKEN, STRIPE_API_KEY, STRIPE_WEBHOOK_SECRET
 
+# ------------------ Flask Setup ------------------
+app = Flask(__name__)
+
+# ------------------ Stripe Setup ------------------
 stripe.api_key = STRIPE_API_KEY
-
-RESPONSES = {
-    "dm_error": "You can't use this bot in private chat.",
-    "no_access": "Please purchase for access!",
-    "error_occurred": "An error occurred. Admins have been notified",
-}
-
 ALLOWED_USERS_FILE = "allowed_users.json"
 
 def load_allowed_users():
-    if not os.path.exists(ALLOWED_USERS_FILE):
-        return set()
-    with open(ALLOWED_USERS_FILE, "r") as f:
-        content = f.read().strip()
-        if not content:
-            return set()
-        try:
-            return set(json.loads(content))
-        except json.JSONDecodeError:
-            return set()
+    if os.path.exists(ALLOWED_USERS_FILE):
+        with open(ALLOWED_USERS_FILE, "r") as f:
+            return set(json.load(f))
+    return set()
 
-def save_allowed_users(allowed_users):
+def save_allowed_users(users):
     with open(ALLOWED_USERS_FILE, "w") as f:
-        json.dump(list(allowed_users), f)
+        json.dump(list(users), f)
 
+# ------------------ Telegram Setup ------------------
+bot = Bot(token=TOKEN)
+dispatcher = Dispatcher(bot, update_queue=None, use_context=True)
+
+# ------------------ Bot Data ------------------
 ALLOWED_USER_IDS = load_allowed_users()
 PAYMENT_SESSIONS = {}
 
@@ -77,24 +66,23 @@ TRANSLATIONS = {
     },
 }
 
-# Helper functions
+# ------------------ Helper Functions ------------------
 def has_access(user_id):
-    # 🔹 Always re-load so new buyers get access instantly
     global ALLOWED_USER_IDS
     ALLOWED_USER_IDS = load_allowed_users()
     return user_id in ALLOWED_USER_IDS
 
 def requires_start(func):
     @wraps(func)
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        if "language" not in context.user_data:
-            if update.message:
-                await update.message.reply_text("Please use /start first to begin.")
-            elif update.callback_query:
-                await update.callback_query.answer()
-                await update.callback_query.message.reply_text("Please use /start first to begin.")
+    def wrapper(update, context, *args, **kwargs):
+        if "language" not in getattr(context, 'user_data', {}):
+            if hasattr(update, 'message') and update.message:
+                update.message.reply_text("Please use /start first to begin.")
+            elif hasattr(update, 'callback_query') and update.callback_query:
+                update.callback_query.answer()
+                update.callback_query.message.reply_text("Please use /start first to begin.")
             return
-        return await func(update, context, *args, **kwargs)
+        return func(update, context, *args, **kwargs)
     return wrapper
 
 def get_store_keyboard(page=0, items_per_page=10):
@@ -113,156 +101,121 @@ def get_store_keyboard(page=0, items_per_page=10):
         keyboard.append(nav_buttons)
     return InlineKeyboardMarkup(keyboard)
 
-# Command handlers
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ------------------ Telegram Handlers ------------------
+def start(update, context):
     keyboard = [
-        [
-            InlineKeyboardButton("English", callback_data="lang_en"),
-            InlineKeyboardButton("Português", callback_data="lang_pt")
-        ]
+        [InlineKeyboardButton("English", callback_data="lang_en"),
+         InlineKeyboardButton("Português", callback_data="lang_pt")]
     ]
-    lang = context.user_data.get("language", "en")
-    await update.message.reply_text(
-        TRANSLATIONS["welcome"][lang],
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    lang = getattr(context, 'user_data', {}).get("language", "en")
+    update.message.reply_text(TRANSLATIONS["welcome"][lang], reply_markup=InlineKeyboardMarkup(keyboard))
 
 @requires_start
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def help_command(update, context):
     lang = context.user_data.get("language", "en")
-    await update.message.reply_text(TRANSLATIONS["help_menu"][lang], parse_mode='Markdown')
+    update.message.reply_text(TRANSLATIONS["help_menu"][lang], parse_mode='Markdown')
 
 @requires_start
-async def access_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def access_command(update, context):
     user_id = update.effective_user.id
     lang = context.user_data.get("language", "en")
     if has_access(user_id):
-        await update.message.reply_text(TRANSLATIONS["access_granted"][lang])
+        update.message.reply_text(TRANSLATIONS["access_granted"][lang])
     else:
-        await update.message.reply_text(RESPONSES["no_access"] if lang == "en" else "Por favor, compre para ter acesso!")
+        update.message.reply_text("Please purchase for access!" if lang=="en" else "Por favor, compre para ter acesso!")
 
 @requires_start
-async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def generate_command(update, context):
     user_id = update.effective_user.id
     lang = context.user_data.get("language", "en")
     if not has_access(user_id):
-        await update.message.reply_text(RESPONSES["no_access"] if lang == "en" else "Por favor, compre para ter acesso!")
+        update.message.reply_text("Please purchase for access!" if lang=="en" else "Por favor, compre para ter acesso!")
         return
-    await update.message.reply_text(
-        TRANSLATIONS["select_store"][lang],
-        reply_markup=get_store_keyboard(page=0)
-    )
+    update.message.reply_text(TRANSLATIONS["select_store"][lang], reply_markup=get_store_keyboard(page=0))
 
 @requires_start
-async def payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def payment_command(update, context):
     user_id = update.effective_user.id
-    try:
-        session = stripe.checkout.Session.create(
-            payment_method_types=['card'],
-            line_items=[{
-                'price_data': {
-                    'currency': 'usd',
-                    'product_data': {'name': 'Access Pass'},
-                    'unit_amount': 500,
-                },
-                'quantity': 1,
-            }],
-            mode='payment',
-            success_url='https://yourdomain.com/payment-success?session_id={CHECKOUT_SESSION_ID}',
-            cancel_url='https://yourdomain.com/payment-cancel',
-            metadata={'telegram_user_id': str(user_id)},
-        )
-        PAYMENT_SESSIONS[session.id] = user_id
-        await update.message.reply_text(
-            f'Please complete your payment by clicking <a href="{session.url}">this link</a>.',
-            parse_mode='HTML'
-        )
-    except Exception as e:
-        await update.message.reply_text(f"Error creating payment session: {str(e)}")
+    session = stripe.checkout.Session.create(
+        payment_method_types=['card'],
+        line_items=[{
+            'price_data': {'currency':'usd', 'product_data': {'name':'Access Pass'}, 'unit_amount':500},
+            'quantity':1,
+        }],
+        mode='payment',
+        success_url='https://yourdomain.com/payment-success?session_id={CHECKOUT_SESSION_ID}',
+        cancel_url='https://yourdomain.com/payment-cancel',
+        metadata={'telegram_user_id': str(user_id)}
+    )
+    PAYMENT_SESSIONS[session.id] = user_id
+    update.message.reply_text(f'Please complete your payment: {session.url}')
 
-# Callback handlers
-async def language_selection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def language_selection_handler(update, context):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     lang = query.data.split("_")[1]
     context.user_data["language"] = lang
-    await query.edit_message_text(TRANSLATIONS["language_set"][lang])
+    query.edit_message_text(TRANSLATIONS["language_set"][lang])
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def button_handler(update, context):
     query = update.callback_query
-    await query.answer()
-    if "language" not in context.user_data:
-        await query.message.reply_text("Please use /start first to begin.")
-        return
-
+    query.answer()
     data = query.data
     if data.startswith('store_'):
         store_key = data[6:]
-        store_name = store_key.replace('_', ' ').upper()
         try:
             module = import_module(f"email_generators.{store_key}")
         except ModuleNotFoundError:
-            await query.edit_message_text("Sorry, this store is not supported yet.")
+            query.edit_message_text("Sorry, this store is not supported yet.")
             return
     elif data.startswith('page_'):
         page = int(data[5:])
-        await query.edit_message_reply_markup(reply_markup=get_store_keyboard(page=page))
+        query.edit_message_reply_markup(reply_markup=get_store_keyboard(page=page))
 
-async def on_startup(app):
-    print("Bot started via webhook...")
+# ------------------ Dispatcher Registration ------------------
+dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(CommandHandler("help", help_command))
+dispatcher.add_handler(CommandHandler("access", access_command))
+dispatcher.add_handler(CommandHandler("generate", generate_command))
+dispatcher.add_handler(CommandHandler("payment", payment_command))
+dispatcher.add_handler(CallbackQueryHandler(language_selection_handler, pattern=r'^lang_'))
+dispatcher.add_handler(CallbackQueryHandler(button_handler, pattern=r'^(page_|store_)'))
 
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+# ------------------ Flask Routes ------------------
+@app.route("/", methods=["GET"])
+def home():
+    return "✅ The HustleBot Server is Running"
 
-    # Add your handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("access", access_command))
-    app.add_handler(CommandHandler("generate", generate_command))
-    app.add_handler(CommandHandler("payment", payment_command))
-    app.add_handler(CallbackQueryHandler(language_selection_handler, pattern=r'^lang_'))
-    app.add_handler(CallbackQueryHandler(button_handler, pattern=r'^(page_|store_)'))
+@app.route(f"/{TOKEN}", methods=["POST"])
+def telegram_webhook():
+    data = request.get_json(force=True)
+    update = Update.de_json(data, bot)
+    dispatcher.process_update(update)
+    return jsonify({"ok": True})
 
-    # Add ConversationHandlers for stores
-    for store in STORE_LIST:
-        store_key = store.lower().replace(" ", "_")
-        try:
-            module = import_module(f"email_generators.{store_key}")
-        except ModuleNotFoundError:
-            continue
+@app.route("/stripe-webhook", methods=["POST"])
+def stripe_webhook():
+    payload = request.data
+    sig_header = request.headers.get("Stripe-Signature")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+    except ValueError as e:
+        return f"Invalid payload: {str(e)}", 400
+    except stripe.error.SignatureVerificationError as e:
+        return f"Invalid signature: {str(e)}", 400
 
-        async def start_receipt_with_lang(update, context, _module=module):
-            lang = context.user_data.get("language", "en")
-            await _module.start_receipt(update, context, lang=lang)
+    if event['type'] == 'checkout.session.completed':
+        session = event['data']['object']
+        telegram_user_id = session['metadata'].get('telegram_user_id')
+        if telegram_user_id:
+            user_id = int(telegram_user_id)
+            allowed_users = load_allowed_users()
+            allowed_users.add(user_id)
+            save_allowed_users(allowed_users)
+            print(f"✅ Access granted for user: {user_id}")
+    return jsonify(success=True)
 
-        async def prompt_handler_with_lang(update, context, _module=module):
-            lang = context.user_data.get("language", "en")
-            await _module.prompt_handler(update, context, lang=lang)
-
-        async def timeout_callback_with_lang(update, context, _module=module):
-            lang = context.user_data.get("language", "en")
-            await _module.timeout_callback(update, context, lang=lang)
-
-        handler = ConversationHandler(
-            entry_points=[CallbackQueryHandler(start_receipt_with_lang, pattern=f'^store_{store_key}$')],
-            states={module.PROMPT_ENUM[f'PROMPT_{i}']: [MessageHandler(filters.TEXT & ~filters.COMMAND, prompt_handler_with_lang)] for i in range(10)},
-            fallbacks=[MessageHandler(filters.ALL, timeout_callback_with_lang)],
-            conversation_timeout=60
-        )
-        app.add_handler(handler)
-
-    # Webhook setup for Render
-    PORT = int(os.environ.get("PORT", 8443))
-    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")  # Automatically provided by Render
-
-    # NEW
-    print("Starting Telegram bot via webhook...")
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=f"{RENDER_URL}/{TOKEN}",  # Telegram webhook path
-        drop_pending_updates=True
-    )
-
+# ------------------ Run ------------------
 if __name__ == "__main__":
-    main()
+    PORT = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=PORT)
