@@ -15,9 +15,7 @@ from telegram.ext import (
 from importlib import import_module
 from functools import wraps
 import stripe
-from config import TOKEN, STRIPE_API_KEY
-
-stripe.api_key = STRIPE_API_KEY
+from config import TOKEN
 
 RESPONSES = {
     "dm_error": "You can't use this bot in private chat.",
@@ -156,33 +154,6 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_store_keyboard(page=0)
     )
 
-@requires_start
-async def payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    try:
-        session = stripe.checkout.Session.create(
-            payment_method_types=['card'],
-            line_items=[{
-                'price_data': {
-                    'currency': 'usd',
-                    'product_data': {'name': 'Access Pass'},
-                    'unit_amount': 500,
-                },
-                'quantity': 1,
-            }],
-            mode='payment',
-            success_url='https://yourdomain.com/payment-success?session_id={CHECKOUT_SESSION_ID}',
-            cancel_url='https://yourdomain.com/payment-cancel',
-            metadata={'telegram_user_id': str(user_id)},
-        )
-        PAYMENT_SESSIONS[session.id] = user_id
-        await update.message.reply_text(
-            f'Please complete your payment by clicking <a href="{session.url}">this link</a>.',
-            parse_mode='HTML'
-        )
-    except Exception as e:
-        await update.message.reply_text(f"Error creating payment session: {str(e)}")
-
 # Callback handlers
 async def language_selection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -220,7 +191,6 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("access", access_command))
     app.add_handler(CommandHandler("generate", generate_command))
-    app.add_handler(CommandHandler("payment", payment_command))
     app.add_handler(CallbackQueryHandler(language_selection_handler, pattern=r'^lang_'))
     app.add_handler(CallbackQueryHandler(button_handler, pattern=r'^(page_|store_)'))
 
